@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { readFileSync } from 'fs';
 import * as logger from "firebase-functions/logger";
-import { onRequest } from "firebase-functions/v2/https";
-const { getFirestore, Timestamp, FieldValue, Filter } = require('firebase-admin/firestore');
-const { initializeApp, applicationDefault, cert } = require('firebase-admin/app');
+import { Request, onRequest } from "firebase-functions/v2/https";
+import { DocumentReference, QueryDocumentSnapshot, QuerySnapshot, WriteResult } from "firebase-admin/firestore";
+import { getFirestore, Timestamp, FieldValue, Filter } from "firebase-admin/firestore";
+import { initializeApp, applicationDefault, cert, getAuth } from "firebase-admin/app";
+import { DecodedIdToken } from "firebase-admin/auth"
 
 initializeApp();
 const db = {
@@ -36,6 +38,12 @@ type User = { uid: string, created: Date, birth: Date, expYears: number, email?:
 const secretNames: [string] = ["GITHUB_CLIENT_ID"]
 const secrets = Object.fromEntries(secretNames.map(x => [x, readFileSync(`../.secrets/${x.toLowerCase()}`, 'utf-8')]))
 
+async function validateUid(request: Request) {
+    const { idToken } = request.query as { idToken: string }
+    return getAuth().verifyIdToken(idToken)
+    .then((decodedToken: DecodedIdToken) => decodedToken.uid)
+}
+
 export const helloWorld = onRequest((request, response) => {
     logger.info("Hello logs!", { structuredData: true });
     response.send("Hello again !");
@@ -48,6 +56,16 @@ export const addUser = onRequest(async (request, response) => {
         ...user, ...(email && { email }),
     })
     db.users.add(user)
-        .then(res => { response.send(res) })
-        .catch(error => { console.error("Caught error!", error) })
+        .then((res: DocumentReference) => { response.send(res) })
+        .catch((error: Error) => { console.error("Caught error!", error) })
 });
+
+export const deleteUser = onRequest(async (request, response) => {
+    validateUid(request)
+    .then(uid => db.users.where("uid", "==", uid))
+    .then(query => query.get())
+    .then((querySnapshot: QuerySnapshot) => querySnapshot.forEach((doc: QueryDocumentSnapshot) => doc.ref.delete()))
+    .then(_ => response.status(200).send("Deleted"))
+    .catch((error: Error) => response.status(500).send(`Error ${error}`))
+});
+
