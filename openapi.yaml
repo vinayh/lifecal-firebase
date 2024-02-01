@@ -1,0 +1,182 @@
+openapi: '3.0.0'
+info:
+  version: '1.0.0'
+  title: 'lifecal-backend'
+  description: Life Calendar backend
+servers:
+  - url: http://127.0.0.1:5001/lifecal-backend/us-central1
+    description: Local Firebase emulator
+  - url: http://staging-api.example.com
+    description: Optional server description, e.g. Internal staging server for testing
+paths:
+  /addUser:
+    parameters:
+      - in: query
+        name: uid
+        required: true
+        # schema:
+        #   $ref: '#/components/schemas/SpacecraftId'
+        schema:
+          type: string
+      - in: query
+        name: name
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: birth
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: expYears
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: email
+        required: false
+        schema:
+          type: string
+    get:
+      summary: Add a user
+      responses:
+        '200':
+          description: Successfully added user
+          content:
+            application/json:
+              schema:
+                type: string
+        500:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /deleteUser:
+    parameters:
+      - in: query
+        name: idToken
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Delete a user
+      responses:
+        '200':
+          description: Successfully deleted user
+          content:
+            application/json:
+              schema:
+                type: string
+        500:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /getUser:
+    parameters:
+      - in: query
+        name: idToken
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get user
+      responses:
+        '200':
+          description: Successfully got user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        500:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    Tag:
+      type: object
+      required:
+        - id
+        - created
+        - name
+        - color
+      properties:
+        id:
+          type: number
+        created:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+    Entry:
+      type: object
+      required:
+        - id
+        - created
+        - start
+        - note
+        - tags
+      properties:
+        id:
+          type: number
+        created:
+          type: string
+        start:
+          type: string
+        note:
+          type: string
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+    User:
+      type: object
+      required:
+        - uid
+        - created
+        - name
+        - birth
+        - expYears
+        - entries
+        - tags
+      properties:
+        uid:
+          type: string
+        created:
+          type: string
+        name:
+          type: string
+        birth:
+          type: string
+        expYears:
+          type: number
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entry'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          description: A human readable error message
+          type: string
+  # securitySchemes:
+  #   ApiKey:
+  #     type: apiKey
+  #     in: header
+  #     name: X-Api-Key
+security:
+  - ApiKey: []
