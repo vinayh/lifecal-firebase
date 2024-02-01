@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { readFileSync } from 'fs';
-import * as logger from "firebase-functions/logger";
+// import { readFileSync } from 'fs';
+// import * as logger from "firebase-functions/logger";
 import { Request, onRequest } from "firebase-functions/v2/https";
-import { DocumentReference, QueryDocumentSnapshot, QuerySnapshot, WriteResult } from "firebase-admin/firestore";
-import { getFirestore, Timestamp, FieldValue, Filter } from "firebase-admin/firestore";
-import { initializeApp, applicationDefault, cert, getAuth } from "firebase-admin/app";
-import { DecodedIdToken } from "firebase-admin/auth"
+import { QueryDocumentSnapshot, DocumentReference } from "firebase-admin/firestore";
+import { getFirestore } from "firebase-admin/firestore";
+import { initializeApp } from "firebase-admin/app";
+import { DecodedIdToken, getAuth } from "firebase-admin/auth"
 
 initializeApp();
 const db = {
@@ -25,47 +25,55 @@ type Entry = { id: number, created: Date, start: Date, note: string, tags: Tag[]
 
 
 const UserZ = z.object({
-    uid: z.string(), created: z.date(), birth: z.date(), expYears: z.number(), email: z.string().email().optional(), entries: z.array(EntryZ), tags: z.array(TagZ)
+    uid: z.string(), created: z.date(), name: z.string(), birth: z.date(), expYears: z.number(), email: z.string().email().optional(), entries: z.array(EntryZ), tags: z.array(TagZ)
 })
-type User = { uid: string, created: Date, birth: Date, expYears: number, email?: string, entries: Entry[], tags: Tag[] }
+type User = { uid: string, created: Date, name: string, birth: Date, expYears: number, email?: string, entries: Entry[], tags: Tag[] }
 
-// function isUser(user: User): user is User {
-//     return user.uid !== undefined && user.created !== undefined
-//         && user.birth !== undefined && user.expYears !== undefined
-//         && user.expYears !== undefined && !isNaN(user.expYears)
-// }
 
-const secretNames: [string] = ["GITHUB_CLIENT_ID"]
-const secrets = Object.fromEntries(secretNames.map(x => [x, readFileSync(`../.secrets/${x.toLowerCase()}`, 'utf-8')]))
+// const secretNames: [string] = ["GITHUB_CLIENT_ID"]
+// const secrets = Object.fromEntries(secretNames.map(x => [x, readFileSync(`../.secrets/${x.toLowerCase()}`, 'utf-8')]))
 
-async function validateUid(request: Request) {
+async function validateUid(request: Request): Promise<string> {
     const { idToken } = request.query as { idToken: string }
     return getAuth().verifyIdToken(idToken)
-    .then((decodedToken: DecodedIdToken) => decodedToken.uid)
+        .then((decodedToken: DecodedIdToken) => decodedToken.uid)
 }
 
-export const helloWorld = onRequest((request, response) => {
-    logger.info("Hello logs!", { structuredData: true });
-    response.send("Hello again !");
-});
+async function userFromRequest(request: Request): Promise<QueryDocumentSnapshot> {
+    return validateUid(request)
+        .then(uid => db.users.where("uid", "==", uid).limit(1))
+        .then(query => query.get())
+        .then(querySnapshot => querySnapshot.docs[0])
+}
+
+// export const helloWorld = onRequest((request, response) => {
+//     logger.info("Hello logs!", { structuredData: true });
+//     response.send("Hello again !");
+// });
 
 export const addUser = onRequest(async (request, response) => {
-    const { uid, birth, expYears, email } = request.query as { uid: string, birth: string, expYears: string, email: string }
-    var user: User = { uid: uid, created: new Date(), birth: new Date(birth), expYears: parseInt(expYears), entries: [], tags: [] }
+    const { uid, name, birth, expYears, email } = request.query as { uid: string, name: string, birth: string, expYears: string, email: string }
+    var user: User = { uid: uid, created: new Date(), name: name, birth: new Date(birth), expYears: parseInt(expYears), entries: [], tags: [] }
     user = UserZ.parse({
         ...user, ...(email && { email }),
     })
     db.users.add(user)
-        .then((res: DocumentReference) => { response.send(res) })
-        .catch((error: Error) => { console.error("Caught error!", error) })
+        .then((res: DocumentReference) => res.get())
+        .then(user => response.send(user))
+        .catch((error: Error) => console.error("Caught error!", error))
 });
 
 export const deleteUser = onRequest(async (request, response) => {
-    validateUid(request)
-    .then(uid => db.users.where("uid", "==", uid))
-    .then(query => query.get())
-    .then((querySnapshot: QuerySnapshot) => querySnapshot.forEach((doc: QueryDocumentSnapshot) => doc.ref.delete()))
-    .then(_ => response.status(200).send("Deleted"))
-    .catch((error: Error) => response.status(500).send(`Error ${error}`))
+    userFromRequest(request)
+        .then(user => user.ref.delete())
+        .then(_ => response.status(200).send("Deleted"))
+        .catch(error => response.status(500).send(`Error ${error}`))
+});
+
+export const getUser = onRequest(async (request, response) => {
+    userFromRequest(request)
+        .then(user => UserZ.parse(user))
+        .then((user: User) => response.status(200).send(user))
+        .catch(error => response.status(500).send(`Error ${error}`))
 });
 
