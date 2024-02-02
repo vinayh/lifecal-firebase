@@ -15,19 +15,23 @@ const db = {
 const TagZ = z.object({
   id: z.number(), created: z.date(), name: z.string(), color: z.string(),
 });
-type Tag = { id: number, created: Date, name: string, color: string }
+// type Tag = z.infer<typeof TagZ>
 
 
 const EntryZ = z.object({
   id: z.number(), created: z.date(), start: z.date(), note: z.string(), tags: z.array(TagZ),
 });
-type Entry = { id: number, created: Date, start: Date, note: string, tags: Tag[] }
+// type Entry = z.infer<typeof EntryZ>
 
+const InitialUserZ = z.object({
+    uid: z.string(), created: z.date()
+});
+type InitialUser = z.infer<typeof InitialUserZ>
 
 const UserZ = z.object({
   uid: z.string(), created: z.date(), name: z.string(), birth: z.date(), expYears: z.number(), email: z.string().email().optional(), entries: z.array(EntryZ), tags: z.array(TagZ),
 });
-type User = { uid: string, created: Date, name: string, birth: Date, expYears: number, email?: string, entries: Entry[], tags: Tag[] }
+// type User = z.infer<typeof UserZ>
 
 
 // const secretNames: [string] = ["GITHUB_CLIENT_ID"]
@@ -61,32 +65,32 @@ export const deleteUser = functions.auth.user().onDelete(async (user) => {
   return await db.users.doc(user.uid).delete();
 });
 
-export const editUserProfile = onRequest(async (request, response) => {
+export const editUserProfile = onRequest({ cors: true }, async (request, response) => {
   const {name, birth, expYears, email} = request.query as { name: string, birth: string, expYears: string, email: string };
   validateUid(request)
     .then((uid) => {
       return {uid: uid, created: new Date(), name: name, birth: new Date(birth), expYears: parseInt(expYears), entries: [], tags: []};
     })
-    .then((newUser) => UserZ.parse({...newUser, ...(email && {email})}))
-    .then((newUser) => db.users.add(newUser))
+    .then(newUser => UserZ.parse({...newUser, ...(email && {email})}))
+    .then(newUser => db.users.add(newUser))
     .then((res: DocumentReference) => res.get())
-    .then((user) => response.send(user))
-    .catch((error: Error) => console.error("Error adding user!", error));
+    .then(user => response.send(user))
+    .catch(error => console.error("Error adding user!", error));
 });
 
-// export const deleteUser = onRequest(async (request, response) => {
+// export const deleteUser = onRequest({ cors: true }, async (request, response) => {
 //     userFromRequest(request)
 //         .then(user => user.ref.delete())
 //         .then(_ => response.status(200).send("Deleted"))
 //         .catch(error => response.status(500).send(`Error ${error}`))
 // });
 
-export const getUser = onRequest(async (request, response) => {
+export const getUser = onRequest({ cors: true }, async (request, response) => {
   userFromRequest(request)
-    .then((user) => {
+    .then(user => {
       console.log(user);
-      return UserZ.parse(user);
+      return InitialUserZ.parse(user);
     })
-    .then((user: User) => response.status(200).send(user))
-    .catch((error) => response.status(500).send(`Error ${error}`));
+    .then((user: InitialUser) => response.status(200).send(user))
+    .catch(error => response.status(500).send(`Error ${error}`));
 });
