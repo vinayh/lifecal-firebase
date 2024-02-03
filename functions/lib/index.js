@@ -33,13 +33,13 @@ const UserZ = zod_1.z.object({
 async function validateUid(request) {
     const { idToken } = request.query;
     return (0, auth_1.getAuth)().verifyIdToken(idToken)
-        .then((decodedToken) => decodedToken.uid);
+        .then((decodedToken) => decodedToken.uid)
+        .catch(error => { throw Error("Failed to decode UID from idToken: " + error.message); });
 }
 async function userFromRequest(request) {
     return validateUid(request)
-        .then((uid) => db.users.where("uid", "==", uid).limit(1))
-        .then((query) => query.get())
-        .then((querySnapshot) => querySnapshot.docs[0]);
+        .then(uid => db.users.doc(uid).get())
+        .catch(error => { throw Error("Failed to get user from request: " + error.message); });
 }
 // export const helloWorld = onRequest((request, response) => {
 //     logger.info("Hello logs!", { structuredData: true });
@@ -47,7 +47,7 @@ async function userFromRequest(request) {
 // });
 exports.addUser = functions.auth.user().onCreate(async (user) => {
     console.log("Add user triggered", user);
-    return await db.users.doc(user.uid).set({ created: new Date() });
+    return await db.users.doc(user.uid).set({ uid: user.uid, created: new Date() });
 });
 exports.deleteUser = functions.auth.user().onDelete(async (user) => {
     console.log("Delete user triggered", user);
@@ -56,14 +56,14 @@ exports.deleteUser = functions.auth.user().onDelete(async (user) => {
 exports.editUserProfile = (0, https_1.onRequest)({ cors: true }, async (request, response) => {
     const { name, birth, expYears, email } = request.query;
     validateUid(request)
-        .then((uid) => {
+        .then(uid => {
         return { uid: uid, created: new Date(), name: name, birth: new Date(birth), expYears: parseInt(expYears), entries: [], tags: [] };
     })
         .then(newUser => UserZ.parse(Object.assign(Object.assign({}, newUser), (email && { email }))))
         .then(newUser => db.users.add(newUser))
         .then((res) => res.get())
         .then(user => response.send(user))
-        .catch(error => console.error("Error adding user!", error));
+        .catch(error => { throw Error("Error editing user profile: " + error.message); });
 });
 // export const deleteUser = onRequest({ cors: true }, async (request, response) => {
 //     userFromRequest(request)

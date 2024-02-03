@@ -3,7 +3,7 @@ import {z} from "zod";
 // import * as logger from "firebase-functions/logger";
 import {Request, onRequest} from "firebase-functions/v2/https";
 import * as functions from "firebase-functions/v1";
-import {QueryDocumentSnapshot, DocumentReference, getFirestore} from "firebase-admin/firestore";
+import {DocumentSnapshot, DocumentReference, getFirestore} from "firebase-admin/firestore";
 import {initializeApp} from "firebase-admin/app";
 import {DecodedIdToken, getAuth} from "firebase-admin/auth";
 
@@ -40,14 +40,14 @@ const UserZ = z.object({
 async function validateUid(request: Request): Promise<string> {
   const {idToken} = request.query as { idToken: string };
   return getAuth().verifyIdToken(idToken)
-    .then((decodedToken: DecodedIdToken) => decodedToken.uid);
+    .then((decodedToken: DecodedIdToken) => decodedToken.uid)
+    .catch(error => { throw Error("Failed to decode UID from idToken: " + error.message) })
 }
 
-async function userFromRequest(request: Request): Promise<QueryDocumentSnapshot> {
+async function userFromRequest(request: Request): Promise<DocumentSnapshot> {
   return validateUid(request)
-    .then((uid) => db.users.where("uid", "==", uid).limit(1))
-    .then((query) => query.get())
-    .then((querySnapshot) => querySnapshot.docs[0]);
+    .then(uid => db.users.doc(uid).get())
+    .catch(error => { throw Error("Failed to get user from request: " + error.message) })
 }
 
 // export const helloWorld = onRequest((request, response) => {
@@ -57,7 +57,7 @@ async function userFromRequest(request: Request): Promise<QueryDocumentSnapshot>
 
 export const addUser = functions.auth.user().onCreate(async (user) => {
   console.log("Add user triggered", user);
-  return await db.users.doc(user.uid).set({created: new Date()});
+  return await db.users.doc(user.uid).set({uid: user.uid, created: new Date()});
 });
 
 export const deleteUser = functions.auth.user().onDelete(async (user) => {
@@ -65,17 +65,17 @@ export const deleteUser = functions.auth.user().onDelete(async (user) => {
   return await db.users.doc(user.uid).delete();
 });
 
-export const editUserProfile = onRequest({ cors: true }, async (request, response) => {
+export const editUser = onRequest({ cors: true }, async (request, response) => {
   const {name, birth, expYears, email} = request.query as { name: string, birth: string, expYears: string, email: string };
   validateUid(request)
-    .then((uid) => {
+    .then(uid => {
       return {uid: uid, created: new Date(), name: name, birth: new Date(birth), expYears: parseInt(expYears), entries: [], tags: []};
     })
     .then(newUser => UserZ.parse({...newUser, ...(email && {email})}))
     .then(newUser => db.users.add(newUser))
     .then((res: DocumentReference) => res.get())
     .then(user => response.send(user))
-    .catch(error => console.error("Error adding user!", error));
+    .catch(error => { throw Error("Error editing user profile: " + error.message) })
 });
 
 // export const deleteUser = onRequest({ cors: true }, async (request, response) => {
