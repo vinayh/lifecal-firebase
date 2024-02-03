@@ -1,11 +1,10 @@
-import {z} from "zod";
-// import { readFileSync } from 'fs';
-// import * as logger from "firebase-functions/logger";
-import {Request, onRequest} from "firebase-functions/v2/https";
+import { z } from "zod";
+import { Request, onRequest } from "firebase-functions/v2/https";
 import * as functions from "firebase-functions/v1";
-import {DocumentSnapshot, DocumentReference, getFirestore} from "firebase-admin/firestore";
-import {initializeApp} from "firebase-admin/app";
-import {DecodedIdToken, getAuth} from "firebase-admin/auth";
+import { DocumentData, getFirestore } from "firebase-admin/firestore";
+import { initializeApp } from "firebase-admin/app";
+import { DecodedIdToken, getAuth } from "firebase-admin/auth";
+import { log, debug, error } from "firebase-functions/logger";
 
 initializeApp();
 const db = {
@@ -23,30 +22,39 @@ const EntryZ = z.object({
 });
 // type Entry = z.infer<typeof EntryZ>
 
-const InitialUserZ = z.object({
-    uid: z.string(), created: z.date()
-});
-type InitialUser = z.infer<typeof InitialUserZ>
-
 const UserZ = z.object({
-  uid: z.string(), created: z.date(), name: z.string(), birth: z.date(), expYears: z.number(), email: z.string().email().optional(), entries: z.array(EntryZ), tags: z.array(TagZ),
+  uid: z.string(), created: z.coerce.date(), name: z.string(), birth: z.coerce.date(), expYears: z.number(), email: z.string().email().optional(), entries: z.array(EntryZ), tags: z.array(TagZ),
 });
-// type User = z.infer<typeof UserZ>
-
+const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
+const UserProfileZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true })
 
 // const secretNames: [string] = ["GITHUB_CLIENT_ID"]
 // const secrets = Object.fromEntries(secretNames.map(x => [x, readFileSync(`../.secrets/${x.toLowerCase()}`, 'utf-8')]))
 
 async function validateUid(request: Request): Promise<string> {
-  const {idToken} = request.query as { idToken: string };
+  const { uid, idToken } = request.query as { uid: string, idToken: string };
+  debug(`UID: ${uid}, idToken: ${idToken}`)
   return getAuth().verifyIdToken(idToken)
     .then((decodedToken: DecodedIdToken) => decodedToken.uid)
+    .then(decodedUid => {
+      if (uid == decodedUid) { return decodedUid }
+      else { throw Error("UID provided does not match session token") }
+    })
     .catch(error => { throw Error("Failed to decode UID from idToken: " + error.message) })
 }
 
-async function userFromRequest(request: Request): Promise<DocumentSnapshot> {
+async function userFromRequest(request: Request): Promise<DocumentData> {
   return validateUid(request)
     .then(uid => db.users.doc(uid).get())
+    .then(docSnapshot => docSnapshot.data())
+    .then(user => {
+      if (user == null) { throw Error }
+      else {
+        if (!(user.created == null)) { user.created = user.created.toDate() }
+        if (!(user.birth == null)) { user.birth = user.birth.toDate() }
+        return InitialUserZ.parse(user)
+      }
+    })
     .catch(error => { throw Error("Failed to get user from request: " + error.message) })
 }
 
@@ -56,41 +64,43 @@ async function userFromRequest(request: Request): Promise<DocumentSnapshot> {
 // });
 
 export const addUser = functions.auth.user().onCreate(async (user) => {
-  console.log("Add user triggered", user);
-  return await db.users.doc(user.uid).set({uid: user.uid, created: new Date()});
+  const { uid, email } = user
+  const newUser = { uid: uid, created: new Date(), entries: [], tags: [] }
+  log("Add user triggered", newUser)
+  return await db.users.doc(user.uid).set({ ...newUser, ...(email && { email }) })
 });
 
 export const deleteUser = functions.auth.user().onDelete(async (user) => {
-  console.log("Delete user triggered", user);
-  return await db.users.doc(user.uid).delete();
+  log("Delete user triggered", user)
+  return await db.users.doc(user.uid).delete()
 });
 
-export const editUser = onRequest({ cors: true }, async (request, response) => {
-  const {name, birth, expYears, email} = request.query as { name: string, birth: string, expYears: string, email: string };
-  validateUid(request)
-    .then(uid => {
-      return {uid: uid, created: new Date(), name: name, birth: new Date(birth), expYears: parseInt(expYears), entries: [], tags: []};
+export const updateUser = onRequest({ cors: true }, async (request, response) => {
+  const { name, birth, expYears, email } = request.query as { name: string, birth: string, expYears: string, email: string }
+  const newUser = UserProfileZ.parse({ name: name, email: email, birth: new Date(birth), expYears: parseInt(expYears) })
+  const uid = await validateUid(request)
+  db.users.doc(uid).update(newUser)
+    .then(result => response.status(200).send({ uid: uid, updated: result.writeTime }))
+    .catch(error => {
+      error("Error editing user profile: " + error.message)
+      response.status(500).send(error.message)
     })
-    .then(newUser => UserZ.parse({...newUser, ...(email && {email})}))
-    .then(newUser => db.users.add(newUser))
-    .then((res: DocumentReference) => res.get())
-    .then(user => response.send(user))
-    .catch(error => { throw Error("Error editing user profile: " + error.message) })
 });
-
-// export const deleteUser = onRequest({ cors: true }, async (request, response) => {
-//     userFromRequest(request)
-//         .then(user => user.ref.delete())
-//         .then(_ => response.status(200).send("Deleted"))
-//         .catch(error => response.status(500).send(`Error ${error}`))
-// });
 
 export const getUser = onRequest({ cors: true }, async (request, response) => {
-  userFromRequest(request)
-    .then(user => {
-      console.log(user);
-      return InitialUserZ.parse(user);
-    })
-    .then((user: InitialUser) => response.status(200).send(user))
-    .catch(error => response.status(500).send(`Error ${error}`));
+  const user = await userFromRequest(request)
+  debug(user)
+  try {
+    debug(user)
+    response.status(200).send(user)
+  } catch (e) {
+    error(`Error getting user from request: ${e}, user object: ${user}`)
+    response.status(500).send(user)
+  }
+  // .then(user => {
+  //   log(user);
+  //   return InitialUserZ.parse(user);
+  // })
+  // .then((user: InitialUser) => response.status(200).send(user))
+  // .catch(error => response.status(500).send(error.message));
 });
