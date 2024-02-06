@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getUser = exports.updateUser = exports.deleteUser = exports.addUser = void 0;
+exports.getUser = exports.updateUserProfile = exports.deleteUser = exports.addUser = void 0;
 const zod_1 = require("zod");
 const https_1 = require("firebase-functions/v2/https");
 const functions = require("firebase-functions/v1");
@@ -21,7 +21,7 @@ const EntryZ = zod_1.z.object({
 });
 // type Entry = z.infer<typeof EntryZ>
 const UserZ = zod_1.z.object({
-    uid: zod_1.z.string(), created: zod_1.z.coerce.date(), name: zod_1.z.string(), birth: zod_1.z.coerce.date(), expYears: zod_1.z.number(), email: zod_1.z.string().email().optional(), entries: zod_1.z.array(EntryZ), tags: zod_1.z.array(TagZ),
+    uid: zod_1.z.string(), created: zod_1.z.coerce.date(), name: zod_1.z.string(), birth: zod_1.z.coerce.date(), expYears: zod_1.z.number(), email: zod_1.z.string().email(), entries: zod_1.z.array(EntryZ), tags: zod_1.z.array(TagZ),
 });
 const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true });
 const UserProfileZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true });
@@ -74,9 +74,20 @@ exports.addUser = functions.auth.user().onCreate(async (user) => {
 });
 exports.deleteUser = functions.auth.user().onDelete(async (user) => {
     (0, logger_1.log)("Delete user triggered", user);
-    return await db.users.doc(user.uid).delete();
+    const docRef = db.users.doc(user.uid);
+    docRef.get()
+        .then(doc => {
+        if (doc.exists) {
+            (0, logger_1.log)(`Deleting user with UID: ${user.uid}`);
+            return docRef.delete();
+        }
+        else {
+            (0, logger_1.error)(`No user with UID ${user.uid} found in db`);
+            return null;
+        }
+    });
 });
-exports.updateUser = (0, https_1.onRequest)({ cors: true }, async (request, response) => {
+exports.updateUserProfile = (0, https_1.onRequest)({ cors: true }, async (request, response) => {
     const { name, birth, expYears, email } = request.query;
     const newUser = UserProfileZ.parse({ name: name, email: email, birth: new Date(birth), expYears: parseInt(expYears) });
     const uid = await validateUid(request);

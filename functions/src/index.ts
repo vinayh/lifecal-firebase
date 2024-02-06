@@ -23,7 +23,7 @@ const EntryZ = z.object({
 // type Entry = z.infer<typeof EntryZ>
 
 const UserZ = z.object({
-  uid: z.string(), created: z.coerce.date(), name: z.string(), birth: z.coerce.date(), expYears: z.number(), email: z.string().email().optional(), entries: z.array(EntryZ), tags: z.array(TagZ),
+  uid: z.string(), created: z.coerce.date(), name: z.string(), birth: z.coerce.date(), expYears: z.number(), email: z.string().email(), entries: z.array(EntryZ), tags: z.array(TagZ),
 });
 const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
 const UserProfileZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true })
@@ -50,8 +50,8 @@ async function userFromRequest(request: Request): Promise<DocumentData> {
     .then(user => {
       if (user == null) { throw Error }
       else {
-        if (!(user.created == null)) { user.created = user.created.toDate() }
-        if (!(user.birth == null)) { user.birth = user.birth.toDate() }
+        if (user.created) { user.created = user.created.toDate() }
+        if (user.birth) { user.birth = user.birth.toDate() }
         return InitialUserZ.parse(user)
       }
     })
@@ -72,10 +72,20 @@ export const addUser = functions.auth.user().onCreate(async (user) => {
 
 export const deleteUser = functions.auth.user().onDelete(async (user) => {
   log("Delete user triggered", user)
-  return await db.users.doc(user.uid).delete()
+  const docRef = db.users.doc(user.uid)
+  docRef.get()
+  .then(doc => {
+    if (doc.exists) {
+      log(`Deleting user with UID: ${user.uid}`)
+      return docRef.delete()
+    } else {
+      error(`No user with UID ${user.uid} found in db`)
+      return null
+    }
+  })
 });
 
-export const updateUser = onRequest({ cors: true }, async (request, response) => {
+export const updateUserProfile = onRequest({ cors: true }, async (request, response) => {
   const { name, birth, expYears, email } = request.query as { name: string, birth: string, expYears: string, email: string }
   const newUser = UserProfileZ.parse({ name: name, email: email, birth: new Date(birth), expYears: parseInt(expYears) })
   const uid = await validateUid(request)
