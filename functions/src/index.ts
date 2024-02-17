@@ -26,7 +26,7 @@ const UserZ = z.object({
   uid: z.string(), created: z.coerce.date(), name: z.string(), birth: z.coerce.date(), expYears: z.number(), email: z.string().email(), entries: z.array(EntryZ), tags: z.array(TagZ),
 });
 const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
-const UserProfileZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true })
+const ProfileUpdateZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true, email: true })
 
 // const secretNames: [string] = ["GITHUB_CLIENT_ID"]
 // const secrets = Object.fromEntries(secretNames.map(x => [x, readFileSync(`../.secrets/${x.toLowerCase()}`, 'utf-8')]))
@@ -86,8 +86,8 @@ export const deleteUser = functions.auth.user().onDelete(async (user) => {
 });
 
 export const updateUserProfile = onRequest({ cors: true }, async (request, response) => {
-  const { name, birth, expYears, email } = request.query as { name: string, birth: string, expYears: string, email: string }
-  const newUser = UserProfileZ.parse({ name: name, email: email, birth: new Date(birth), expYears: parseInt(expYears) })
+  const { name, birth, expYears } = request.query as { name: string, birth: string, expYears: string }
+  const newUser = ProfileUpdateZ.parse({ name: name, birth: new Date(birth), expYears: parseInt(expYears) })
   const uid = await validateUid(request)
   db.users.doc(uid).update(newUser)
     .then(result => response.status(200).send({ uid: uid, updated: result.writeTime }))
