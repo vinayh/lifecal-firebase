@@ -24,7 +24,7 @@ const UserZ = zod_1.z.object({
     uid: zod_1.z.string(), created: zod_1.z.coerce.date(), name: zod_1.z.string(), birth: zod_1.z.coerce.date(), expYears: zod_1.z.number(), email: zod_1.z.string().email(), entries: zod_1.z.array(EntryZ), tags: zod_1.z.array(TagZ),
 });
 const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true });
-const UserProfileZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true });
+const ProfileUpdateZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true, email: true });
 // const secretNames: [string] = ["GITHUB_CLIENT_ID"]
 // const secrets = Object.fromEntries(secretNames.map(x => [x, readFileSync(`../.secrets/${x.toLowerCase()}`, 'utf-8')]))
 async function validateUid(request) {
@@ -51,10 +51,10 @@ async function userFromRequest(request) {
             throw Error;
         }
         else {
-            if (!(user.created == null)) {
+            if (user.created) {
                 user.created = user.created.toDate();
             }
-            if (!(user.birth == null)) {
+            if (user.birth) {
                 user.birth = user.birth.toDate();
             }
             return InitialUserZ.parse(user);
@@ -88,8 +88,8 @@ exports.deleteUser = functions.auth.user().onDelete(async (user) => {
     });
 });
 exports.updateUserProfile = (0, https_1.onRequest)({ cors: true }, async (request, response) => {
-    const { name, birth, expYears, email } = request.query;
-    const newUser = UserProfileZ.parse({ name: name, email: email, birth: new Date(birth), expYears: parseInt(expYears) });
+    const { name, birth, expYears } = request.query;
+    const newUser = ProfileUpdateZ.parse({ name: name, birth: new Date(birth), expYears: parseInt(expYears) });
     const uid = await validateUid(request);
     db.users.doc(uid).update(newUser)
         .then(result => response.status(200).send({ uid: uid, updated: result.writeTime }))

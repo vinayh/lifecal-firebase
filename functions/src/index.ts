@@ -37,7 +37,7 @@ async function validateUid(request: Request): Promise<string> {
   return getAuth().verifyIdToken(idToken)
     .then((decodedToken: DecodedIdToken) => decodedToken.uid)
     .then(decodedUid => {
-      if (uid == decodedUid) { return decodedUid }
+      if (uid === decodedUid) { return decodedUid }
       else { throw Error("UID provided does not match session token") }
     })
     .catch(error => { throw Error("Failed to decode UID from idToken: " + error.message) })
@@ -107,10 +107,12 @@ export const getUser = onRequest({ cors: true }, async (request, response) => {
     error(`Error getting user from request: ${e}, user object: ${user}`)
     response.status(500).send(user)
   }
-  // .then(user => {
-  //   log(user);
-  //   return InitialUserZ.parse(user);
-  // })
-  // .then((user: InitialUser) => response.status(200).send(user))
-  // .catch(error => response.status(500).send(error.message));
+});
+
+export const addUpdateEntry = onRequest({ cors: true }, async (request, response) => {
+  const { start, note, tags } = request.query as { start: string, note: string, tags: string }
+  const user = await userFromRequest(request)
+  // db.users.doc(user.uid).update(/*    */)
+  
+  // TODO: Finish implementing fn
 });
