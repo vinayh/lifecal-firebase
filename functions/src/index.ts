@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { Request, onRequest } from "firebase-functions/v2/https";
 import * as functions from "firebase-functions/v1";
-import { DocumentData, getFirestore } from "firebase-admin/firestore";
+import { DocumentData, FieldValue, getFirestore } from "firebase-admin/firestore";
 import { initializeApp } from "firebase-admin/app";
 import { DecodedIdToken, getAuth } from "firebase-admin/auth";
 import { log, debug, error } from "firebase-functions/logger";
+import { format, formatISO } from "date-fns"
 
 initializeApp();
 const db = {
@@ -22,6 +23,7 @@ const EntryZ = z.object({
 });
 // type Entry = z.infer<typeof EntryZ>
 
+// TODO: Update db schema to use ISO date strings as keys/properties mapping to entry objects
 const UserZ = z.object({
   uid: z.string(), created: z.coerce.date(), name: z.string(), birth: z.coerce.date(), expYears: z.number(), email: z.string().email(), entries: z.array(EntryZ), tags: z.array(TagZ),
 });
@@ -74,15 +76,15 @@ export const deleteUser = functions.auth.user().onDelete(async (user) => {
   log("Delete user triggered", user)
   const docRef = db.users.doc(user.uid)
   docRef.get()
-  .then(doc => {
-    if (doc.exists) {
-      log(`Deleting user with UID: ${user.uid}`)
-      return docRef.delete()
-    } else {
-      error(`No user with UID ${user.uid} found in db`)
-      return null
-    }
-  })
+    .then(doc => {
+      if (doc.exists) {
+        log(`Deleting user with UID: ${user.uid}`)
+        return docRef.delete()
+      } else {
+        error(`No user with UID ${user.uid} found in db`)
+        return null
+      }
+    })
 });
 
 export const updateUserProfile = onRequest({ cors: true }, async (request, response) => {
@@ -111,8 +113,20 @@ export const getUser = onRequest({ cors: true }, async (request, response) => {
 
 export const addUpdateEntry = onRequest({ cors: true }, async (request, response) => {
   const { start, note, tags } = request.query as { start: string, note: string, tags: string }
-  const user = await userFromRequest(request)
-  // db.users.doc(user.uid).update(/*    */)
-  
-  // TODO: Finish implementing fn
-});
+  const uid = await validateUid(request)
+  const fieldName = `entries.${formatISO(start, { representation: "date" })}`
+  db.users.doc(uid).update({
+    [fieldName]:
+    {
+      created: FieldValue.serverTimestamp(),
+      start: start,
+      note: note,
+      tags: tags
+    }
+  })
+    .then(res => response.status(200).send({ uid: uid, updated: res.writeTime }))
+    .catch(error => {
+      error("Error updating entry: " + error.message)
+      response.status(500).send(error.message)
+    })
+})
