@@ -15,17 +15,14 @@ const db = {
 const TagZ = z.object({
   id: z.number(), created: z.date(), name: z.string(), color: z.string(),
 });
-// type Tag = z.infer<typeof TagZ>
-
 
 const EntryZ = z.object({
-  id: z.number(), created: z.date(), start: z.date(), note: z.string(), tags: z.array(TagZ),
+  id: z.number(), created: z.date(), start: z.date(), note: z.string(), tags: z.array(z.string()),
 });
-// type Entry = z.infer<typeof EntryZ>
 
 // TODO: Update db schema to use ISO date strings as keys/properties mapping to entry objects
 const UserZ = z.object({
-  uid: z.string(), created: z.coerce.date(), name: z.string(), birth: z.coerce.date(), expYears: z.number(), email: z.string().email(), entries: z.array(EntryZ), tags: z.array(TagZ),
+  uid: z.string(), created: z.coerce.date(), name: z.string(), birth: z.coerce.date(), expYears: z.number().refine(i => i > 0), email: z.string().email(), entries: z.array(EntryZ), tags: z.array(TagZ),
 });
 const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
 const ProfileUpdateZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true, email: true })
@@ -89,9 +86,13 @@ export const deleteUser = functions.auth.user().onDelete(async (user) => {
 
 export const updateUserProfile = onRequest({ cors: true }, async (request, response) => {
   const { name, birth, expYears } = request.query as { name: string, birth: string, expYears: string }
-  const newUser = ProfileUpdateZ.parse({ name: name, birth: new Date(birth), expYears: parseInt(expYears) })
+  const newUser = ProfileUpdateZ.safeParse({ name: name, birth: new Date(birth), expYears: parseInt(expYears) })
+  if (!newUser.success) {
+    response.status(400).send("Invalid user profile")
+    return
+  }
   const uid = await validateUid(request)
-  db.users.doc(uid).update(newUser)
+  db.users.doc(uid).update(newUser.data)
     .then(result => response.status(200).send({ uid: uid, updated: result.writeTime }))
     .catch(error => {
       error("Error editing user profile: " + error.message)
@@ -112,7 +113,7 @@ export const getUser = onRequest({ cors: true }, async (request, response) => {
 });
 
 export const addUpdateEntry = onRequest({ cors: true }, async (request, response) => {
-  const { start, note, tags } = request.query as { start: string, note: string, tags: string }
+  const { start, note, tags } = request.query as { start: string, note: string, tags: string[] }
   const uid = await validateUid(request)
   const fieldName = `entries.${formatISO(start, { representation: "date" })}`
   db.users.doc(uid).update({
