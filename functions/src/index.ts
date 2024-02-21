@@ -33,7 +33,6 @@ const EntryZ = z.object({
 })
 type Entry = z.infer<typeof EntryZ>
 
-// TODO: Update db schema to use ISO date strings as keys/properties mapping to entry objects
 const UserZ = z.object({
     uid: z.string(),
     created: z.coerce.date(),
@@ -45,7 +44,7 @@ const UserZ = z.object({
     // tags: z.array(TagZ),
 })
 
-type User = z.infer<typeof UserZ>
+// type User = z.infer<typeof UserZ>
 // const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
 const ProfileUpdateZ = UserZ.partial({
     uid: true,
@@ -73,7 +72,9 @@ async function validateUid(request: Request): Promise<string> {
         })
 }
 
-async function entriesObject(entriesRef: CollectionReference): Promise<Record<string, Entry>> {
+async function entriesObject(
+    entriesRef: CollectionReference
+): Promise<Record<string, Entry>> {
     if (!entriesRef) {
         return {}
     }
@@ -87,26 +88,6 @@ async function entriesObject(entriesRef: CollectionReference): Promise<Record<st
         entries[result.start] = EntryZ.parse(result)
     })
     return entries
-}
-
-async function getUserAndEntries(uid: string): Promise<[User, Record<string, Entry>]> {
-    const user = await db.users
-        .doc(uid)
-        .get()
-        .then(docSnapshot => docSnapshot.data())
-        .catch(e => {
-            throw new Error("Failed to get user from request: " + e.message)
-        })
-    if (!user) {
-        throw new Error("No user found")
-    }
-    if (user.created) {
-        user.created = user.created.toDate()
-    }
-    if (user.birth) {
-        user.birth = user.birth.toDate()
-    }
-    return [UserZ.parse(user), await entriesObject(user.entries)]
 }
 
 export const addUser = functions.auth.user().onCreate(async user => {
@@ -171,19 +152,36 @@ export const updateUserProfile = onRequest(
     }
 )
 
-export const getUser = onRequest({ cors: true }, async (request, response) => {
-    const [user, entries] = await validateUid(request)
-        .then(uid => getUserAndEntries(uid))
-        .catch(e => {
-            response.status(500).send(user)
-            throw new Error(
-                `Error getting user from request: ${e}, user object: ${user}`
-            )
-        })
-    user.entries = entries
-    debug(user)
-    response.status(200).send(user)
-})
+export const getUserAndEntries = onRequest(
+    { cors: true },
+    async (request, response) => {
+        const userRef = await validateUid(request).then(uid =>
+            db.users.doc(uid)
+        )
+        const user = await userRef
+            .get()
+            .then(docSnapshot => docSnapshot.data())
+            .then(user => {
+                if (!user) {
+                    throw new Error("No user found")
+                }
+                if (user.created) {
+                    user.created = user.created.toDate()
+                }
+                if (user.birth) {
+                    user.birth = user.birth.toDate()
+                }
+                return user
+            })
+            .then(user => UserZ.parse(user))
+            .catch(e => {
+                throw new Error("Failed to get user from request: " + e.message)
+            })
+        user.entries = await entriesObject(userRef.collection("entries"))
+        debug(user)
+        response.status(200).send(user)
+    }
+)
 
 export const addUpdateEntry = onRequest(
     { cors: true },
@@ -195,10 +193,10 @@ export const addUpdateEntry = onRequest(
             tags: string
         }
         const newEntry = {
-          updated: FieldValue.serverTimestamp(),
-          start: formatISO(start, { representation: "date" }),
-          note: note,
-          tags: JSON.parse(tags),
+            updated: FieldValue.serverTimestamp(),
+            start: formatISO(start, { representation: "date" }),
+            note: note,
+            tags: JSON.parse(tags),
         }
         const entriesRef = db.users.doc(uid).collection("entries")
         const res = await entriesRef

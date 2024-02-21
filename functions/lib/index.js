@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.addUpdateEntry = exports.getUser = exports.updateUserProfile = exports.deleteUser = exports.addUser = void 0;
+exports.addUpdateEntry = exports.getUserAndEntries = exports.updateUserProfile = exports.deleteUser = exports.addUser = void 0;
 const zod_1 = require("zod");
 const https_1 = require("firebase-functions/v2/https");
 const functions = require("firebase-functions/v1");
@@ -26,7 +26,6 @@ const EntryZ = zod_1.z.object({
     note: zod_1.z.string(),
     tags: zod_1.z.array(zod_1.z.string()),
 });
-// TODO: Update db schema to use ISO date strings as keys/properties mapping to entry objects
 const UserZ = zod_1.z.object({
     uid: zod_1.z.string(),
     created: zod_1.z.coerce.date(),
@@ -37,6 +36,7 @@ const UserZ = zod_1.z.object({
     entries: zod_1.z.record(ISODateZ, EntryZ).optional(),
     // tags: z.array(TagZ),
 });
+// type User = z.infer<typeof UserZ>
 // const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
 const ProfileUpdateZ = UserZ.partial({
     uid: true,
@@ -77,25 +77,6 @@ async function entriesObject(entriesRef) {
         entries[result.start] = EntryZ.parse(result);
     });
     return entries;
-}
-async function getUserAndEntries(uid) {
-    const user = await db.users
-        .doc(uid)
-        .get()
-        .then(docSnapshot => docSnapshot.data())
-        .catch(e => {
-        throw new Error("Failed to get user from request: " + e.message);
-    });
-    if (!user) {
-        throw new Error("No user found");
-    }
-    if (user.created) {
-        user.created = user.created.toDate();
-    }
-    if (user.birth) {
-        user.birth = user.birth.toDate();
-    }
-    return [UserZ.parse(user), await entriesObject(user.entries)];
 }
 exports.addUser = functions.auth.user().onCreate(async (user) => {
     const { uid, email } = user;
@@ -145,14 +126,28 @@ exports.updateUserProfile = (0, https_1.onRequest)({ cors: true }, async (reques
         response.status(500).send(e.message);
     });
 });
-exports.getUser = (0, https_1.onRequest)({ cors: true }, async (request, response) => {
-    const [user, entries] = await validateUid(request)
-        .then(uid => getUserAndEntries(uid))
+exports.getUserAndEntries = (0, https_1.onRequest)({ cors: true }, async (request, response) => {
+    const userRef = await validateUid(request).then(uid => db.users.doc(uid));
+    const user = await userRef
+        .get()
+        .then(docSnapshot => docSnapshot.data())
+        .then(user => {
+        if (!user) {
+            throw new Error("No user found");
+        }
+        if (user.created) {
+            user.created = user.created.toDate();
+        }
+        if (user.birth) {
+            user.birth = user.birth.toDate();
+        }
+        return user;
+    })
+        .then(user => UserZ.parse(user))
         .catch(e => {
-        response.status(500).send(user);
-        throw new Error(`Error getting user from request: ${e}, user object: ${user}`);
+        throw new Error("Failed to get user from request: " + e.message);
     });
-    user.entries = entries;
+    user.entries = await entriesObject(userRef.collection("entries"));
     (0, logger_1.debug)(user);
     response.status(200).send(user);
 });
