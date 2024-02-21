@@ -130,3 +130,5 @@ dist
 .pnp.*
 functions/.yarn/install-state.gz
 functions/.yarn/cache
+
+.secrets/
