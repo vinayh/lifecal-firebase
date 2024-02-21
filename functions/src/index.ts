@@ -1,133 +1,221 @@
 import { z } from "zod";
 import { Request, onRequest } from "firebase-functions/v2/https";
 import * as functions from "firebase-functions/v1";
-import { DocumentData, FieldValue, getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { initializeApp } from "firebase-admin/app";
 import { DecodedIdToken, getAuth } from "firebase-admin/auth";
 import { log, debug, error } from "firebase-functions/logger";
-import { format, formatISO } from "date-fns"
+import { formatISO } from "date-fns";
 
 initializeApp();
 const db = {
-  users: getFirestore().collection("users"),
+    users: getFirestore().collection("users"),
 };
 
 const TagZ = z.object({
-  id: z.number(), created: z.date(), name: z.string(), color: z.string(),
+    id: z.number(),
+    created: z.date(),
+    name: z.string(),
+    color: z.string(),
 });
 
 const EntryZ = z.object({
-  id: z.number(), created: z.date(), start: z.date(), note: z.string(), tags: z.array(z.string()),
+    id: z.number(),
+    created: z.date(),
+    start: z.date(),
+    note: z.string(),
+    tags: z.array(z.string()),
 });
+type Entry = z.infer<typeof EntryZ>;
 
 // TODO: Update db schema to use ISO date strings as keys/properties mapping to entry objects
 const UserZ = z.object({
-  uid: z.string(), created: z.coerce.date(), name: z.string(), birth: z.coerce.date(), expYears: z.number().refine(i => i > 0), email: z.string().email(), entries: z.array(EntryZ), tags: z.array(TagZ),
+    uid: z.string(),
+    created: z.coerce.date(),
+    name: z.string(),
+    birth: z.coerce.date(),
+    expYears: z.number().refine((i) => i > 0),
+    email: z.string().email(),
+    entries: z.array(EntryZ),
+    tags: z.array(TagZ),
 });
-const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
-const ProfileUpdateZ = UserZ.partial({ uid: true, created: true, entries: true, tags: true, email: true })
-
-// const secretNames: [string] = ["GITHUB_CLIENT_ID"]
-// const secrets = Object.fromEntries(secretNames.map(x => [x, readFileSync(`../.secrets/${x.toLowerCase()}`, 'utf-8')]))
+type User = z.infer<typeof UserZ>;
+// const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
+const ProfileUpdateZ = UserZ.partial({
+    uid: true,
+    created: true,
+    entries: true,
+    tags: true,
+    email: true,
+});
 
 async function validateUid(request: Request): Promise<string> {
-  const { uid, idToken } = request.query as { uid: string, idToken: string };
-  debug(`UID: ${uid}, idToken: ${idToken}`)
-  return getAuth().verifyIdToken(idToken)
-    .then((decodedToken: DecodedIdToken) => decodedToken.uid)
-    .then(decodedUid => {
-      if (uid === decodedUid) { return decodedUid }
-      else { throw Error("UID provided does not match session token") }
-    })
-    .catch(error => { throw Error("Failed to decode UID from idToken: " + error.message) })
+    const { uid, idToken } = request.query as { uid: string; idToken: string };
+    debug(`UID: ${uid}, idToken: ${idToken}`);
+    return getAuth()
+        .verifyIdToken(idToken)
+        .then((decodedToken: DecodedIdToken) => decodedToken.uid)
+        .then((decodedUid) => {
+            if (uid === decodedUid) {
+                return decodedUid;
+            } else {
+                throw Error("UID provided does not match session token");
+            }
+        })
+        .catch((error) => {
+            throw Error("Failed to decode UID from idToken: " + error.message);
+        });
 }
 
-async function userFromRequest(request: Request): Promise<DocumentData> {
-  return validateUid(request)
-    .then(uid => db.users.doc(uid).get())
-    .then(docSnapshot => docSnapshot.data())
-    .then(user => {
-      if (user == null) { throw Error }
-      else {
-        if (user.created) { user.created = user.created.toDate() }
-        if (user.birth) { user.birth = user.birth.toDate() }
-        return InitialUserZ.parse(user)
-      }
-    })
-    .catch(error => { throw Error("Failed to get user from request: " + error.message) })
-}
+async function getUserAndEntries(uid: string): Promise<User> {
+    const user = await db.users
+        .doc(uid)
+        .get()
+        .then((docSnapshot) => docSnapshot.data())
+        .catch((error) => {
+            throw new Error(
+                "Failed to get user from request: " + error.message
+            );
+        });
+    if (!user) {
+        throw new Error("No user found");
+    }
+    if (user.created) {
+        user.created = user.created.toDate();
+    }
+    if (user.birth) {
+        user.birth = user.birth.toDate();
+    }
 
-// export const helloWorld = onRequest((request, response) => {
-//     logger.info("Hello logs!", { structuredData: true });
-//     response.send("Hello again !");
-// });
+    return user.entries
+        .get()
+        .then((entries: Entry[]) => {
+            user.entries = entries;
+            return UserZ.parse(user);
+        })
+        .catch((error: Error) => {
+            throw new Error("Failed to get entries for user: " + error.message);
+        });
+}
 
 export const addUser = functions.auth.user().onCreate(async (user) => {
-  const { uid, email } = user
-  const newUser = { uid: uid, created: new Date(), entries: [], tags: [] }
-  log("Add user triggered", newUser)
-  return await db.users.doc(user.uid).set({ ...newUser, ...(email && { email }) })
+    const { uid, email } = user;
+    const newUser = { uid: uid, created: new Date(), entries: [], tags: [] };
+    log("Add user triggered", newUser);
+    return await db.users
+        .doc(user.uid)
+        .set({ ...newUser, ...(email && { email }) });
 });
 
 export const deleteUser = functions.auth.user().onDelete(async (user) => {
-  log("Delete user triggered", user)
-  const docRef = db.users.doc(user.uid)
-  docRef.get()
-    .then(doc => {
-      if (doc.exists) {
-        log(`Deleting user with UID: ${user.uid}`)
-        return docRef.delete()
-      } else {
-        error(`No user with UID ${user.uid} found in db`)
-        return null
-      }
-    })
+    log("Delete user triggered", user);
+    const docRef = db.users.doc(user.uid);
+    docRef.get().then((doc) => {
+        if (doc.exists) {
+            log(`Deleting user with UID: ${user.uid}`);
+            return docRef.delete();
+        } else {
+            error(`No user with UID ${user.uid} found in db`);
+            return null;
+        }
+    });
 });
 
-export const updateUserProfile = onRequest({ cors: true }, async (request, response) => {
-  const { name, birth, expYears } = request.query as { name: string, birth: string, expYears: string }
-  const newUser = ProfileUpdateZ.safeParse({ name: name, birth: new Date(birth), expYears: parseInt(expYears) })
-  if (!newUser.success) {
-    response.status(400).send("Invalid user profile")
-    return
-  }
-  const uid = await validateUid(request)
-  db.users.doc(uid).update(newUser.data)
-    .then(result => response.status(200).send({ uid: uid, updated: result.writeTime }))
-    .catch(error => {
-      error("Error editing user profile: " + error.message)
-      response.status(500).send(error.message)
-    })
-});
+export const updateUserProfile = onRequest(
+    { cors: true },
+    async (request, response) => {
+        const { name, birth, expYears } = request.query as {
+            name: string;
+            birth: string;
+            expYears: string;
+        };
+        const newUser = ProfileUpdateZ.safeParse({
+            name: name,
+            birth: new Date(birth),
+            expYears: parseInt(expYears),
+        });
+        if (!newUser.success) {
+            response.status(400).send("Invalid user profile");
+            return;
+        }
+        const uid = await validateUid(request);
+        db.users
+            .doc(uid)
+            .update(newUser.data)
+            .then((result) =>
+                response
+                    .status(200)
+                    .send({ uid: uid, updated: result.writeTime })
+            )
+            .catch((error) => {
+                error("Error editing user profile: " + error.message);
+                response.status(500).send(error.message);
+            });
+    }
+);
 
 export const getUser = onRequest({ cors: true }, async (request, response) => {
-  const user = await userFromRequest(request)
-  debug(user)
-  try {
-    debug(user)
-    response.status(200).send(user)
-  } catch (e) {
-    error(`Error getting user from request: ${e}, user object: ${user}`)
-    response.status(500).send(user)
-  }
+    const user = await validateUid(request).then((uid) =>
+        getUserAndEntries(uid)
+    );
+    debug(user);
+    try {
+        debug(user);
+        response.status(200).send(user);
+    } catch (e) {
+        error(`Error getting user from request: ${e}, user object: ${user}`);
+        response.status(500).send(user);
+    }
 });
 
-export const addUpdateEntry = onRequest({ cors: true }, async (request, response) => {
-  const { start, note, tags } = request.query as { start: string, note: string, tags: string[] }
-  const uid = await validateUid(request)
-  const fieldName = `entries.${formatISO(start, { representation: "date" })}`
-  db.users.doc(uid).update({
-    [fieldName]:
-    {
-      created: FieldValue.serverTimestamp(),
-      start: start,
-      note: note,
-      tags: tags
+export const addUpdateEntry = onRequest(
+    { cors: true },
+    async (request, response) => {
+        const uid = await validateUid(request);
+        const { start, note, tags } = request.query as {
+            start: string;
+            note: string;
+            tags: string[];
+        };
+        const entryStart = formatISO(start, { representation: "date" });
+        const entries = db.users.doc(uid).collection("entries");
+        const newEntry = {
+            updated: FieldValue.serverTimestamp(),
+            start: start,
+            note: note,
+            tags: tags,
+        };
+        entries
+            .doc(entryStart)
+            .get()
+            .then((entryDoc) => {
+                if (entryDoc.exists) {
+                    return entryDoc.ref.update(newEntry);
+                } else {
+                    return entryDoc.ref.create({
+                        created: FieldValue.serverTimestamp(),
+                        ...newEntry,
+                    });
+                }
+            })
+            .then((res) =>
+                response.status(200).send({ uid: uid, updated: res.writeTime })
+            )
+            .catch((error) => {
+                error("Error adding/updating entry: " + error.message);
+                response.status(500).send(error.message);
+            });
     }
-  })
-    .then(res => response.status(200).send({ uid: uid, updated: res.writeTime }))
-    .catch(error => {
-      error("Error updating entry: " + error.message)
-      response.status(500).send(error.message)
-    })
-})
+);
+
+// export const addTagHelper = async (tagName: string): Promise<WriteResult> => {
+
+// }
+
+// export const addTag = onRequest({ cors: true }, async (request, response) => {
+//     const uid = await validateUid(request)
+//     const { tagName } = request.query as { tagName: string }
+//     addTagHelper(tagName)
+//         .then(res => response.status(200).send({ uid: uid, updated: res.writeTime }))
+//         .catch(error => response.status(500).send(error.message))
+// })
