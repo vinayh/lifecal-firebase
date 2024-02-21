@@ -36,8 +36,12 @@ const UserZ = zod_1.z.object({
     entries: zod_1.z.record(ISODateZ, EntryZ).optional(),
     // tags: z.array(TagZ),
 });
+const InitialUserZ = UserZ.partial({
+    name: true,
+    birth: true,
+    expYears: true,
+});
 // type User = z.infer<typeof UserZ>
-// const InitialUserZ = UserZ.partial({ name: true, birth: true, expYears: true, email: true })
 const ProfileUpdateZ = UserZ.partial({
     uid: true,
     created: true,
@@ -143,7 +147,21 @@ exports.getUserAndEntries = (0, https_1.onRequest)({ cors: true }, async (reques
         }
         return user;
     })
-        .then(user => UserZ.parse(user))
+        .then(user => {
+        const completeParsed = UserZ.safeParse(user);
+        if (completeParsed.success) {
+            return completeParsed.data;
+        }
+        else {
+            const initialParsed = InitialUserZ.safeParse(user);
+            if (initialParsed.success) {
+                return initialParsed.data;
+            }
+            else {
+                throw new Error("Invalid user profile");
+            }
+        }
+    })
         .catch(e => {
         throw new Error("Failed to get user from request: " + e.message);
     });
