@@ -3,6 +3,7 @@ import { Request, onRequest } from "firebase-functions/v2/https"
 import * as functions from "firebase-functions/v1"
 import {
     CollectionReference,
+    DocumentReference,
     FieldValue,
     getFirestore,
 } from "firebase-admin/firestore"
@@ -48,7 +49,7 @@ const InitialUserZ = UserZ.partial({
     birth: true,
     expYears: true,
 })
-// type User = z.infer<typeof UserZ>
+type User = z.infer<typeof UserZ>
 
 const ProfileUpdateZ = UserZ.partial({
     uid: true,
@@ -156,27 +157,37 @@ export const updateUserProfile = onRequest(
     }
 )
 
+const waitForUser = (userRef: DocumentReference): Promise<User> => {
+    var loadedUser = false
+    return new Promise((resolve, reject) => {
+        setTimeout(() => {
+            reject(new Error("User not found before timeout"))
+        }, 5000)
+        userRef.onSnapshot(snapshot => {
+            if (snapshot.exists && !loadedUser) {
+                const user = snapshot.data()
+                if (user) {
+                    loadedUser = true
+                    if (user.created) {
+                        user.created = user.created.toDate()
+                    }
+                    if (user.birth) {
+                        user.birth = user.birth.toDate()
+                    }
+                    resolve(user as User)
+                }
+            }
+        })
+    })
+}
+
 export const getUserAndEntries = onRequest(
     { cors: true },
     async (request, response) => {
         const userRef = await validateUid(request).then(uid =>
             db.users.doc(uid)
         )
-        const user = await userRef
-            .get()
-            .then(docSnapshot => docSnapshot.data())
-            .then(user => {
-                if (!user) {
-                    throw new Error("No user found")
-                }
-                if (user.created) {
-                    user.created = user.created.toDate()
-                }
-                if (user.birth) {
-                    user.birth = user.birth.toDate()
-                }
-                return user
-            })
+        const user = await waitForUser(userRef)
             .then(user => {
                 const completeParsed = UserZ.safeParse(user)
                 if (completeParsed.success) {

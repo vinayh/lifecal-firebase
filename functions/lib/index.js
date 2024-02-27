@@ -41,7 +41,6 @@ const InitialUserZ = UserZ.partial({
     birth: true,
     expYears: true,
 });
-// type User = z.infer<typeof UserZ>
 const ProfileUpdateZ = UserZ.partial({
     uid: true,
     created: true,
@@ -130,23 +129,32 @@ exports.updateUserProfile = (0, https_1.onRequest)({ cors: true }, async (reques
         response.status(500).send(e.message);
     });
 });
+const waitForUser = (userRef) => {
+    var loadedUser = false;
+    return new Promise((resolve, reject) => {
+        setTimeout(() => {
+            reject(new Error("User not found before timeout"));
+        }, 5000);
+        userRef.onSnapshot(snapshot => {
+            if (snapshot.exists && !loadedUser) {
+                const user = snapshot.data();
+                if (user) {
+                    loadedUser = true;
+                    if (user.created) {
+                        user.created = user.created.toDate();
+                    }
+                    if (user.birth) {
+                        user.birth = user.birth.toDate();
+                    }
+                    resolve(user);
+                }
+            }
+        });
+    });
+};
 exports.getUserAndEntries = (0, https_1.onRequest)({ cors: true }, async (request, response) => {
     const userRef = await validateUid(request).then(uid => db.users.doc(uid));
-    const user = await userRef
-        .get()
-        .then(docSnapshot => docSnapshot.data())
-        .then(user => {
-        if (!user) {
-            throw new Error("No user found");
-        }
-        if (user.created) {
-            user.created = user.created.toDate();
-        }
-        if (user.birth) {
-            user.birth = user.birth.toDate();
-        }
-        return user;
-    })
+    const user = await waitForUser(userRef)
         .then(user => {
         const completeParsed = UserZ.safeParse(user);
         if (completeParsed.success) {
