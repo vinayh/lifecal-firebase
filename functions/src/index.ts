@@ -5,6 +5,7 @@ import {
     CollectionReference,
     DocumentReference,
     FieldValue,
+    WriteResult,
     getFirestore,
 } from "firebase-admin/firestore"
 import { initializeApp } from "firebase-admin/app"
@@ -254,6 +255,41 @@ export const addUpdateEntry = onRequest(
             .catch(e => {
                 error("Error getting updated entries: " + e.message)
                 response.status(500).send(e.message)
+            })
+    }
+)
+
+export const deleteEntry = onRequest(
+    { cors: true },
+    async (request, response) => {
+        const uid = await validateUid(request)
+        const { start } = request.query
+        const result = ISODateZ.safeParse(start)
+        if (!result.success) {
+            error("No valid start date provided")
+            response.status(400).send("No valid start date provided")
+            return
+        }
+        const startDate = result.data
+        const docRef = db.users.doc(uid).collection("entries").doc(startDate)
+        return docRef
+            .get()
+            .then(doc => {
+                if (doc.exists) {
+                    return docRef.delete()
+                } else {
+                    throw new Error(
+                        `No entry with start date ${startDate}, uid: ${uid} found in db`
+                    )
+                }
+            })
+            .then((res: WriteResult) => {
+                log(`Deleted entry, start date: ${startDate}, uid: ${uid}`)
+                response.status(200).send({ uid: uid, start: startDate, updated: res.writeTime })
+            })
+            .catch(e => {
+                error(e.message)
+                response.status(400).send(e.message)
             })
     }
 )
